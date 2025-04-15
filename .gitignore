@@ -1,0 +1,5 @@
+# Ignore user-specific config
+config.h
+
+# Allow the example file to remain
+!config_example.h
