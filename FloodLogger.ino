@@ -25,7 +25,7 @@ long readUltrasonicDistance() {
   delayMicroseconds(10);
   digitalWrite(ULTRASONIC_TRIG_PIN, LOW);
   long duration = pulseIn(ULTRASONIC_ECHO_PIN, HIGH, 25000); // timeout after 25ms
-  long distance = duration * 0.17; // rough conversion to mm
+  long distance = duration * 0.1715; //conversion to mm
   return distance;
 }
 
