@@ -98,10 +98,8 @@ void do_send(osjob_t* j) {
 }
 
 void setup() {
-  pinMode(LED_BUILTIN, OUTPUT);
   pinMode(ULTRASONIC_TRIG_PIN, OUTPUT);
   pinMode(ULTRASONIC_ECHO_PIN, INPUT);
-  digitalWrite(LED_BUILTIN, LOW);
 
   Serial.begin(115200);
   Serial.println(F("Booting"));

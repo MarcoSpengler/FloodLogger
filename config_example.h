@@ -37,8 +37,6 @@ static const u1_t PROGMEM APPKEY[16] = { 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x6
 // General Configuration
 // ------------------------
 
-#define LED_BUILTIN 25
-
 #define TX_INTERVAL 60 // in seconds
 
 // LMIC pin mapping
