@@ -9,27 +9,36 @@
 
 SSD1306Wire display(OLED_ADDRESS, OLED_SDA, OLED_SCL);
 
-// Functions to get TTN keys from config.h
+// Function declarations
+void do_send(osjob_t* j);
+void showDisplayMessage(String msg);
+
+// LMIC keys from config
 void os_getArtEui(u1_t* buf) { memcpy_P(buf, APPEUI, 8); }
 void os_getDevEui(u1_t* buf) { memcpy_P(buf, DEVEUI, 8); }
 void os_getDevKey(u1_t* buf) { memcpy_P(buf, APPKEY, 16); }
 
-static uint8_t mydata[4];  // buffer for distance (2 bytes)
 static osjob_t sendjob;
+static uint8_t mydata[4];
 
-// Simple function to read distance from ultrasonic sensor
+RTC_DATA_ATTR int dryCounter = 0;
+bool shouldSend = false;
+bool waitingForTXComplete = false;
+bool sensorCheckedThisCycle = false;
+bool isJoined = false;
+
+// Read distance from ultrasonic sensor
 long readUltrasonicDistance() {
   digitalWrite(ULTRASONIC_TRIG_PIN, LOW);
   delayMicroseconds(2);
   digitalWrite(ULTRASONIC_TRIG_PIN, HIGH);
   delayMicroseconds(10);
   digitalWrite(ULTRASONIC_TRIG_PIN, LOW);
-  long duration = pulseIn(ULTRASONIC_ECHO_PIN, HIGH, 25000); // timeout after 25ms
-  long distance = duration * 0.1715; //conversion to mm
-  return distance;
+  long duration = pulseIn(ULTRASONIC_ECHO_PIN, HIGH, 25000); // 25ms timeout
+  return duration * 0.1715; // in mm
 }
 
-// OLED message function
+// OLED message display
 void showDisplayMessage(String msg) {
   display.clear();
   display.setTextAlignment(TEXT_ALIGN_CENTER);
@@ -37,7 +46,7 @@ void showDisplayMessage(String msg) {
   display.display();
 }
 
-// LMIC event handler
+// LoRaWAN events
 void onEvent(ev_t ev) {
   switch (ev) {
     case EV_JOINING:
@@ -48,23 +57,28 @@ void onEvent(ev_t ev) {
       Serial.println(F("Joined!"));
       showDisplayMessage("Joined network!");
       LMIC_setLinkCheckMode(0);
+      isJoined = true;
       break;
     case EV_TXCOMPLETE:
       Serial.println(F("TX complete"));
       showDisplayMessage("Send complete!");
 
-      if (LMIC.txrxFlags & TXRX_ACK) {
-        Serial.println(F("Received ACK"));
-      }
+      if (LMIC.txrxFlags & TXRX_ACK) Serial.println(F("Received ACK"));
       if (LMIC.dataLen > 0) {
         Serial.print(F("Received "));
         Serial.print(LMIC.dataLen);
         Serial.println(F(" bytes"));
       }
 
-      // replace with ESP.deepSleep(...) here later
-      // ESP.deepSleep(4 * 60 * 60 * 1e6); // sleep for 4 hours
-      os_setTimedCallback(&sendjob, os_getTime() + sec2osticks(TX_INTERVAL), do_send);
+      delay(100); // let OLED settle
+
+      waitingForTXComplete = false;
+
+      // Sleep after send
+      showDisplayMessage("Sleeping...");
+      delay(2000);  // show message
+      esp_sleep_enable_timer_wakeup(1 * 60 * 1000000); // 1min
+      esp_deep_sleep_start();
       break;
     case EV_JOIN_FAILED:
       Serial.println(F("Join failed"));
@@ -77,8 +91,10 @@ void onEvent(ev_t ev) {
   }
 }
 
-// Prepare and send sensor data
+// Prepare and send distance
 void do_send(osjob_t* j) {
+  if (!(shouldSend) || waitingForTXComplete) return;
+
   if (LMIC.opmode & OP_TXRXPEND) {
     Serial.println(F("Busy, not sending"));
     showDisplayMessage("Busy...");
@@ -87,7 +103,6 @@ void do_send(osjob_t* j) {
     Serial.print("Distance: ");
     Serial.println(distance);
 
-    // Encode distance as 2 bytes
     mydata[0] = (distance >> 8) & 0xFF;
     mydata[1] = distance & 0xFF;
 
@@ -101,6 +116,9 @@ void setup() {
   pinMode(ULTRASONIC_TRIG_PIN, OUTPUT);
   pinMode(ULTRASONIC_ECHO_PIN, INPUT);
 
+  pinMode(SENSE_OUT, OUTPUT);
+  pinMode(SENSE_IN, INPUT_PULLDOWN);
+
   Serial.begin(115200);
   Serial.println(F("Booting"));
 
@@ -111,9 +129,70 @@ void setup() {
 
   os_init();
   LMIC_reset();
-  do_send(&sendjob); // send first time
+  LMIC_startJoining();
 }
 
 void loop() {
-  os_runloop_once(); // nothing else needed here
+  // Wait until we're joined before doing anything
+  if (!isJoined) {
+    os_runloop_once();
+    return;
+  }
+  // Wait for LMIC TX to complete if we're in the middle of a send
+  if (waitingForTXComplete) {
+    unsigned long txStart = millis();
+    while (waitingForTXComplete && millis() - txStart < 8000) {
+      os_runloop_once();  // let LMIC do its thing
+    }
+
+    if (waitingForTXComplete) {
+      Serial.println("TX timeout - forcing sleep");
+      showDisplayMessage("TX timeout...");
+      delay(2000);
+      digitalWrite(LED_BUILTIN, LOW);
+      esp_sleep_enable_timer_wakeup(1 * 60 * 1000000); // 1 min
+      esp_deep_sleep_start();
+    }
+
+    return;
+  }
+
+  // Only check sensors once per wake-up cycle
+  if (!sensorCheckedThisCycle) {
+    digitalWrite(SENSE_OUT, HIGH);
+    delay(40);
+    int val = analogRead(SENSE_IN);
+    digitalWrite(SENSE_OUT, LOW);
+
+    Serial.print("Analog value: ");
+    Serial.println(val);
+
+    if (val > 2500) {
+      shouldSend = true;
+      dryCounter = 0;
+      Serial.println("Wet - sending");
+    } else {
+      dryCounter++;
+      Serial.print("Dry (");
+      Serial.print(dryCounter);
+      Serial.println(")");
+      shouldSend = (dryCounter >= 3);
+      if (shouldSend) dryCounter = 0;
+    }
+
+    sensorCheckedThisCycle = true;
+
+    if (shouldSend) {
+      do_send(&sendjob);
+      waitingForTXComplete = true;
+    } else {
+      showDisplayMessage("Dry - sleep...");
+      delay(2000);
+      digitalWrite(LED_BUILTIN, LOW);
+      esp_sleep_enable_timer_wakeup(1 * 60 * 1000000); // 1 min
+      esp_deep_sleep_start();
+    }
+  }
+
+  os_runloop_once();  // continue LMIC stack
 }
