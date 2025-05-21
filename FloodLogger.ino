@@ -23,6 +23,44 @@ void os_getDevKey(u1_t *buf) { memcpy_P(buf, APPKEY, 16); }
 static osjob_t sendjob;
 static uint8_t mydata[4];
 
+// Distance anomaly detection variables and logic
+RTC_DATA_ATTR long lastDistances[3] = {0, 0, 0};
+RTC_DATA_ATTR int distanceIndex = 0;
+RTC_DATA_ATTR bool retryAfterAnomaly = false;
+
+bool isAnomalous(long newDistance)
+{
+  if (newDistance == 0)
+    return true;
+
+  float mean = 0;
+  for (int i = 0; i < 3; i++)
+  {
+    mean += lastDistances[i];
+  }
+  mean /= 3.0;
+
+  float stddev = 0;
+  for (int i = 0; i < 3; i++)
+  {
+    stddev += pow(lastDistances[i] - mean, 2);
+  }
+  stddev = sqrt(stddev / 3.0);
+
+  float trend1 = lastDistances[1] - lastDistances[0];
+  float trend2 = lastDistances[2] - lastDistances[1];
+  float expectedTrend = (trend1 + trend2) / 2.0;
+  float currentTrend = newDistance - lastDistances[2];
+
+  return (abs(newDistance - mean) > 2 * stddev || abs(currentTrend - expectedTrend) > stddev);
+}
+
+void updateDistanceHistory(long newDistance)
+{
+  lastDistances[distanceIndex] = newDistance;
+  distanceIndex = (distanceIndex + 1) % 3;
+}
+
 RTC_DATA_ATTR int dryCounter = 0;
 bool shouldSend = false;
 bool waitingForTXComplete = false;
@@ -113,21 +151,52 @@ void do_send(osjob_t *j)
   {
     Serial.println(F("Busy, not sending"));
     showDisplayMessage("Busy...");
+    return;
+  }
+
+  long distance = readUltrasonicDistance();
+  Serial.print("Distance: ");
+  Serial.println(distance);
+
+  // Handle retry after anomaly
+  if (retryAfterAnomaly)
+  {
+    retryAfterAnomaly = false;
+
+    if (isAnomalous(distance))
+    {
+      // Confirmed anomaly: send fault code -1
+      Serial.println("Confirmed anomaly - sending fault code");
+      showDisplayMessage("Sending fault (-1)");
+      mydata[0] = 0xFF;
+      mydata[1] = 0xFF;
+      LMIC_setTxData2(1, mydata, 2, 0);
+      Serial.println(F("Fault packet queued"));
+      return;
+    }
+    // Valid measurement after retry: continue to send normally
   }
   else
   {
-    long distance = readUltrasonicDistance();
-    Serial.print("Distance: ");
-    Serial.println(distance);
-
-    mydata[0] = (distance >> 8) & 0xFF;
-    mydata[1] = distance & 0xFF;
-
-    // show value and sending on display
-    showDisplayMessage("Distance: " + String(distance) + " mm");
-    LMIC_setTxData2(1, mydata, 2, 0);
-    Serial.println(F("Packet queued"));
+    // First anomaly detected: schedule retry
+    if (isAnomalous(distance))
+    {
+      Serial.println("Anomaly detected - sleeping before retry");
+      showDisplayMessage("Anomaly - retrying");
+      retryAfterAnomaly = true;
+      ESP.deepSleep(60e6); // Sleep for 60 seconds (in microseconds)
+      return;
+    }
+    // Valid first measurement: record it
+    updateDistanceHistory(distance);
   }
+
+  // Encode and send normal measurement
+  mydata[0] = (distance >> 8) & 0xFF;
+  mydata[1] = distance & 0xFF;
+  showDisplayMessage("Distance: " + String(distance) + " mm");
+  LMIC_setTxData2(1, mydata, 2, 0);
+  Serial.println(F("Packet queued"));
 }
 
 void initLoRa()
