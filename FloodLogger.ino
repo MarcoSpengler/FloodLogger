@@ -27,6 +27,9 @@ static uint8_t mydata[4];
 RTC_DATA_ATTR long lastDistances[3] = {0, 0, 0};
 RTC_DATA_ATTR int distanceIndex = 0;
 RTC_DATA_ATTR bool retryAfterAnomaly = false;
+RTC_DATA_ATTR uint64_t lastBatteryCheckMicros = 0;
+#define BATTERY_CHECK_INTERVAL_US (24ULL * 60 * 60 * 1000000)  // 24 hours
+#define BATTERY_CRITICAL_MV 3500
 
 bool isAnomalous(long newDistance)
 {
@@ -79,6 +82,11 @@ long readUltrasonicDistance()
   digitalWrite(ULTRASONIC_TRIG_PIN, LOW);
   long duration = pulseIn(ULTRASONIC_ECHO_PIN, HIGH, 25000); // 25ms timeout
   return duration * 0.1715;                                  // in mm
+}
+
+float readBatteryVoltage() {
+  int raw = analogRead(35);
+  return (raw / 4095.0) * 3.3 * 2.0;  // Adjust ratio if needed
 }
 
 // OLED message display
@@ -191,6 +199,25 @@ void do_send(osjob_t *j)
     updateDistanceHistory(distance);
   }
 
+  // Battery voltage check
+  uint64_t now = esp_timer_get_time();
+  if ((now - lastBatteryCheckMicros > BATTERY_CHECK_INTERVAL_US) || lastBatteryCheckMicros == 0) {
+    float voltage = readBatteryVoltage();
+    uint16_t batt_mV = voltage * 1000;
+    if (batt_mV < BATTERY_CRITICAL_MV) {
+      int16_t negBattery = -((int16_t)batt_mV);
+      Serial.print("Battery low, sending: ");
+      Serial.println(negBattery);
+      mydata[0] = (negBattery >> 8) & 0xFF;
+      mydata[1] = negBattery & 0xFF;
+      showDisplayMessage("Low bat: " + String(voltage, 2) + "V");
+      LMIC_setTxData2(1, mydata, 2, 0);
+      lastBatteryCheckMicros = now;
+      return;
+    }
+    lastBatteryCheckMicros = now;
+  }
+
   // Encode and send normal measurement
   mydata[0] = (distance >> 8) & 0xFF;
   mydata[1] = distance & 0xFF;
@@ -276,6 +303,9 @@ void setup()
 
   Serial.begin(115200);
   Serial.println(F("Booting"));
+
+  analogReadResolution(12);
+  analogSetPinAttenuation(35, ADC_11db);
 
   display.init();
   display.flipScreenVertically();
