@@ -27,8 +27,8 @@ static uint8_t mydata[4];
 RTC_DATA_ATTR long lastDistances[3] = {0, 0, 0};
 RTC_DATA_ATTR int distanceIndex = 0;
 RTC_DATA_ATTR bool retryAfterAnomaly = false;
-RTC_DATA_ATTR uint64_t lastBatteryCheckMicros = 0;
-#define BATTERY_CHECK_INTERVAL_US (24ULL * 60 * 60 * 1000000)  // 24 hours
+RTC_DATA_ATTR uint64_t lastBatteryCheckRtc = 0;
+// 24-hour interval in RTC ticks (1 tick ≈ 1/32768 s)
 #define BATTERY_CRITICAL_MV 3500
 
 bool isAnomalous(long newDistance)
@@ -200,8 +200,8 @@ void do_send(osjob_t *j)
   }
 
   // Battery voltage check
-  uint64_t now = esp_timer_get_time();
-  if ((now - lastBatteryCheckMicros > BATTERY_CHECK_INTERVAL_US) || lastBatteryCheckMicros == 0) {
+  uint64_t now = esp_sleep_get_rtc_time();
+  if ((now - lastBatteryCheckRtc > (24ULL * 60 * 60 * 32768)) || lastBatteryCheckRtc == 0) {
     float voltage = readBatteryVoltage();
     uint16_t batt_mV = voltage * 1000;
     if (batt_mV < BATTERY_CRITICAL_MV) {
@@ -212,10 +212,10 @@ void do_send(osjob_t *j)
       mydata[1] = negBattery & 0xFF;
       showDisplayMessage("Low bat: " + String(voltage, 2) + "V");
       LMIC_setTxData2(1, mydata, 2, 0);
-      lastBatteryCheckMicros = now;
+      lastBatteryCheckRtc = now;
       return;
     }
-    lastBatteryCheckMicros = now;
+    lastBatteryCheckRtc = now;
   }
 
   // Encode and send normal measurement
