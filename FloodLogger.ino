@@ -6,6 +6,9 @@
 
 #include "config.h"
 
+#define BATTERY_CHECK_INTERVAL 50
+#define SLEEP_DURATION_US (60ULL * 1000000ULL) // 60 seconds
+
 SSD1306Wire display(OLED_ADDRESS, OLED_SDA, OLED_SCL);
 
 // Function declarations
@@ -27,14 +30,18 @@ static uint8_t mydata[4];
 RTC_DATA_ATTR long lastDistances[3] = {0, 0, 0};
 RTC_DATA_ATTR int distanceIndex = 0;
 RTC_DATA_ATTR bool retryAfterAnomaly = false;
-RTC_DATA_ATTR uint64_t lastBatteryCheckRtc = 0;
-// 24-hour interval in RTC ticks (1 tick ≈ 1/32768 s)
+RTC_DATA_ATTR uint32_t wakeCount = 0;
 #define BATTERY_CRITICAL_MV 3500
 
 bool isAnomalous(long newDistance)
 {
   if (newDistance == 0)
     return true;
+
+  // Skip anomaly check if buffer not fully initialized
+  for (int i = 0; i < 3; i++) {
+    if (lastDistances[i] == 0) return false;
+  }
 
   float mean = 0;
   for (int i = 0; i < 3; i++)
@@ -60,6 +67,7 @@ bool isAnomalous(long newDistance)
 
 void updateDistanceHistory(long newDistance)
 {
+  if (newDistance == 0) return; // skip invalid reads
   lastDistances[distanceIndex] = newDistance;
   distanceIndex = (distanceIndex + 1) % 3;
 }
@@ -84,9 +92,10 @@ long readUltrasonicDistance()
   return duration * 0.1715;                                  // in mm
 }
 
-float readBatteryVoltage() {
+float readBatteryVoltage()
+{
   int raw = analogRead(35);
-  return (raw / 4095.0) * 3.3 * 2.0;  // Adjust ratio if needed
+  return (raw / 4095.0) * 3.3 * 2.0; // Adjust ratio if needed
 }
 
 // OLED message display
@@ -133,8 +142,9 @@ void onEvent(ev_t ev)
 
     // Sleep after send
     showDisplayMessage("Sleeping...");
-    delay(2000);                                     // show message
-    esp_sleep_enable_timer_wakeup(1 * 60 * 1000000); // 1min
+    delay(2000); // show message
+    wakeCount++;
+    esp_sleep_enable_timer_wakeup(SLEEP_DURATION_US); // 1min
     esp_deep_sleep_start();
     break;
   case EV_JOIN_FAILED:
@@ -192,19 +202,21 @@ void do_send(osjob_t *j)
       Serial.println("Anomaly detected - sleeping before retry");
       showDisplayMessage("Anomaly - retrying");
       retryAfterAnomaly = true;
-      ESP.deepSleep(60e6); // Sleep for 60 seconds (in microseconds)
+      wakeCount++;
+      esp_sleep_enable_timer_wakeup(SLEEP_DURATION_US);
+      esp_deep_sleep_start();
       return;
     }
     // Valid first measurement: record it
     updateDistanceHistory(distance);
   }
 
-  // Battery voltage check
-  uint64_t now = esp_sleep_get_rtc_time();
-  if ((now - lastBatteryCheckRtc > (24ULL * 60 * 60 * 32768)) || lastBatteryCheckRtc == 0) {
+  if (wakeCount >= BATTERY_CHECK_INTERVAL)
+  {
     float voltage = readBatteryVoltage();
     uint16_t batt_mV = voltage * 1000;
-    if (batt_mV < BATTERY_CRITICAL_MV) {
+    if (batt_mV < BATTERY_CRITICAL_MV)
+    {
       int16_t negBattery = -((int16_t)batt_mV);
       Serial.print("Battery low, sending: ");
       Serial.println(negBattery);
@@ -212,10 +224,10 @@ void do_send(osjob_t *j)
       mydata[1] = negBattery & 0xFF;
       showDisplayMessage("Low bat: " + String(voltage, 2) + "V");
       LMIC_setTxData2(1, mydata, 2, 0);
-      lastBatteryCheckRtc = now;
+      wakeCount = 0;
       return;
     }
-    lastBatteryCheckRtc = now;
+    wakeCount = 0;
   }
 
   // Encode and send normal measurement
@@ -288,7 +300,8 @@ void waitForTXCompleteOrTimeout()
     showDisplayMessage("TX timeout...");
     delay(2000);
     digitalWrite(LED_BUILTIN, LOW);
-    esp_sleep_enable_timer_wakeup(1 * 60 * 1000000); // 1 min
+    wakeCount++;
+    esp_sleep_enable_timer_wakeup(SLEEP_DURATION_US); // 1 min
     esp_deep_sleep_start();
   }
 }
@@ -311,6 +324,21 @@ void setup()
   display.flipScreenVertically();
   display.setFont(ArialMT_Plain_16);
   showDisplayMessage("Booting...");
+
+  // // DEBUG, show ultrasonic distance
+  // Serial.println("Testing ultrasonic sensor...");
+  // long testDistance = readUltrasonicDistance();
+  // Serial.print("Test distance: ");
+  // Serial.println(testDistance);
+  // if (testDistance > 0)
+  // {
+  //   showDisplayMessage("Ultrasonic OK");
+  // }
+  // else
+  // {
+  //   showDisplayMessage("Ultrasonic error!");
+  //   Serial.println("Ultrasonic sensor error!");
+  // }
 }
 
 void loop()
@@ -344,7 +372,8 @@ void loop()
     showDisplayMessage("Dry - sleep...");
     delay(2000);
     digitalWrite(LED_BUILTIN, LOW);
-    esp_sleep_enable_timer_wakeup(1 * 60 * 1000000); // 1 min
+    wakeCount++;
+    esp_sleep_enable_timer_wakeup(SLEEP_DURATION_US); // 1 min
     esp_deep_sleep_start();
   }
 }
