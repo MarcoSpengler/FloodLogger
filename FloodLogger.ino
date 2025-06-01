@@ -62,7 +62,12 @@ bool isAnomalous(long newDistance)
   float expectedTrend = (trend1 + trend2) / 2.0;
   float currentTrend = newDistance - lastDistances[2];
 
-  return (abs(newDistance - mean) > 2 * stddev || abs(currentTrend - expectedTrend) > stddev);
+  // Hybrid anomaly detection thresholds
+  const float minStdDev = 10.0;     // for distance deviation from mean
+  const float minTrendDev = 20.0;   // for trend deviation
+
+  return (abs(newDistance - mean) > 2 * max(stddev, minStdDev) ||
+          abs(currentTrend - expectedTrend) > max(stddev, minTrendDev));
 }
 
 void updateDistanceHistory(long newDistance)
@@ -190,6 +195,8 @@ void do_send(osjob_t *j)
       mydata[1] = 0xFF;
       LMIC_setTxData2(1, mydata, 2, 0);
       Serial.println(F("Fault packet queued"));
+      for (int i = 0; i < 3; i++) lastDistances[i] = 0;
+      distanceIndex = 0;
       return;
     }
     // Valid measurement after retry: continue to send normally
