@@ -7,7 +7,7 @@
 #include "config.h"
 
 #define BATTERY_CHECK_INTERVAL 50
-#define SLEEP_DURATION_US (60ULL * 1000000ULL) // 60 seconds
+#define SLEEP_DURATION_US (600ULL * 1000000ULL) // 600 seconds
 
 SSD1306Wire display(OLED_ADDRESS, OLED_SDA, OLED_SCL);
 
@@ -88,13 +88,26 @@ bool isJoining = false;
 // Read distance from ultrasonic sensor
 long readUltrasonicDistance()
 {
-  digitalWrite(ULTRASONIC_TRIG_PIN, LOW);
-  delayMicroseconds(2);
-  digitalWrite(ULTRASONIC_TRIG_PIN, HIGH);
-  delayMicroseconds(10);
-  digitalWrite(ULTRASONIC_TRIG_PIN, LOW);
-  long duration = pulseIn(ULTRASONIC_ECHO_PIN, HIGH, 25000); // 25ms timeout
-  return duration * 0.1715;                                  // in mm
+  long total = 0;
+  int validReadings = 0;
+
+  for (int i = 0; i < 3; i++) {
+    digitalWrite(ULTRASONIC_TRIG_PIN, LOW);
+    delayMicroseconds(2);
+    digitalWrite(ULTRASONIC_TRIG_PIN, HIGH);
+    delayMicroseconds(10);
+    digitalWrite(ULTRASONIC_TRIG_PIN, LOW);
+    long duration = pulseIn(ULTRASONIC_ECHO_PIN, HIGH, 25000); // 25ms timeout
+    if (duration > 0) {
+      total += duration;
+      validReadings++;
+    }
+    delay(50); // small delay between samples
+  }
+
+  if (validReadings == 0) return 0;
+  long avgDuration = total / validReadings;
+  return avgDuration * 0.1715; // convert to mm
 }
 
 float readBatteryVoltage()
