@@ -2,18 +2,18 @@
 #include <hal/hal.h>
 #include <SPI.h>
 #include <Wire.h>
-#include "SSD1306Wire.h"
+// #include "SSD1306Wire.h"  // Commented out to save power
 
 #include "config.h"
 
 #define BATTERY_CHECK_INTERVAL 50
 #define SLEEP_DURATION_US (600ULL * 1000000ULL) // 600 seconds
 
-SSD1306Wire display(OLED_ADDRESS, OLED_SDA, OLED_SCL);
+// SSD1306Wire display(OLED_ADDRESS, OLED_SDA, OLED_SCL);  // Commented out to save power
 
 // Function declarations
 void do_send(osjob_t *j);
-void showDisplayMessage(String msg);
+// void showDisplayMessage(String msg);  // Commented out to save power
 void initLoRa();
 void checkSensors();
 void waitForTXCompleteOrTimeout();
@@ -116,14 +116,14 @@ float readBatteryVoltage()
   return (raw / 4095.0) * 3.3 * 2.0; // Adjust ratio if needed
 }
 
-// OLED message display
-void showDisplayMessage(String msg)
-{
-  display.clear();
-  display.setTextAlignment(TEXT_ALIGN_CENTER);
-  display.drawString(display.getWidth() / 2, display.getHeight() / 2, msg);
-  display.display();
-}
+// OLED message display - COMMENTED OUT TO SAVE POWER
+// void showDisplayMessage(String msg)
+// {
+//   display.clear();
+//   display.setTextAlignment(TEXT_ALIGN_CENTER);
+//   display.drawString(display.getWidth() / 2, display.getHeight() / 2, msg);
+//   display.display();
+// }
 
 // LoRaWAN events
 void onEvent(ev_t ev)
@@ -132,18 +132,18 @@ void onEvent(ev_t ev)
   {
   case EV_JOINING:
     Serial.println(F("Joining..."));
-    showDisplayMessage("Joining...");
+    // showDisplayMessage("Joining...");  // Commented out to save power
     break;
   case EV_JOINED:
     Serial.println(F("Joined!"));
-    showDisplayMessage("Joined network!");
+    // showDisplayMessage("Joined network!");  // Commented out to save power
     LMIC_setLinkCheckMode(0);
     isJoined = true;
     isJoining = false;
     break;
   case EV_TXCOMPLETE:
     Serial.println(F("TX complete"));
-    showDisplayMessage("Send complete!");
+    // showDisplayMessage("Send complete!");  // Commented out to save power
 
     if (LMIC.txrxFlags & TXRX_ACK)
       Serial.println(F("Received ACK"));
@@ -154,20 +154,18 @@ void onEvent(ev_t ev)
       Serial.println(F(" bytes"));
     }
 
-    delay(100); // let OLED settle
+
 
     waitingForTXComplete = false;
 
-    // Sleep after send
-    showDisplayMessage("Sleeping...");
-    delay(2000); // show message
+
     wakeCount++;
     esp_sleep_enable_timer_wakeup(SLEEP_DURATION_US); // 1min
     esp_deep_sleep_start();
     break;
   case EV_JOIN_FAILED:
     Serial.println(F("Join failed"));
-    showDisplayMessage("Join failed!");
+    // showDisplayMessage("Join failed!");  // Commented out to save power
     isJoining = false;
     break;
   default:
@@ -186,7 +184,7 @@ void do_send(osjob_t *j)
   if (LMIC.opmode & OP_TXRXPEND)
   {
     Serial.println(F("Busy, not sending"));
-    showDisplayMessage("Busy...");
+    // showDisplayMessage("Busy...");  // Commented out to save power
     return;
   }
 
@@ -203,7 +201,7 @@ void do_send(osjob_t *j)
     {
       // Confirmed anomaly: send fault code -1
       Serial.println("Confirmed anomaly - sending fault code");
-      showDisplayMessage("Sending fault (-1)");
+      // showDisplayMessage("Sending fault (-1)");  // Commented out to save power
       mydata[0] = 0xFF;
       mydata[1] = 0xFF;
       LMIC_setTxData2(1, mydata, 2, 0);
@@ -220,7 +218,7 @@ void do_send(osjob_t *j)
     if (isAnomalous(distance))
     {
       Serial.println("Anomaly detected - sleeping before retry");
-      showDisplayMessage("Anomaly - retrying");
+      // showDisplayMessage("Anomaly - retrying");  // Commented out to save power
       retryAfterAnomaly = true;
       wakeCount++;
       esp_sleep_enable_timer_wakeup(SLEEP_DURATION_US);
@@ -242,7 +240,7 @@ void do_send(osjob_t *j)
       Serial.println(negBattery);
       mydata[0] = (negBattery >> 8) & 0xFF;
       mydata[1] = negBattery & 0xFF;
-      showDisplayMessage("Low bat: " + String(voltage, 2) + "V");
+      // showDisplayMessage("Low bat: " + String(voltage, 2) + "V");  // Commented out to save power
       LMIC_setTxData2(1, mydata, 2, 0);
       wakeCount = 0;
       return;
@@ -253,7 +251,7 @@ void do_send(osjob_t *j)
   // Encode and send normal measurement
   mydata[0] = (distance >> 8) & 0xFF;
   mydata[1] = distance & 0xFF;
-  showDisplayMessage("Distance: " + String(distance) + " mm");
+  // showDisplayMessage("Distance: " + String(distance) + " mm");  // Commented out to save power
   LMIC_setTxData2(1, mydata, 2, 0);
   Serial.println(F("Packet queued"));
 }
@@ -290,7 +288,6 @@ void checkSensors()
     shouldSend = true;
     dryCounter = 0;
     Serial.println("Wet - sending");
-    // showDisplayMessage
   }
   else
   {
@@ -317,7 +314,7 @@ void waitForTXCompleteOrTimeout()
   if (waitingForTXComplete)
   {
     Serial.println("TX timeout - forcing sleep");
-    showDisplayMessage("TX timeout...");
+    // showDisplayMessage("TX timeout...");  // Commented out to save power
     delay(2000);
     digitalWrite(LED_BUILTIN, LOW);
     wakeCount++;
@@ -340,10 +337,10 @@ void setup()
   analogReadResolution(12);
   analogSetPinAttenuation(35, ADC_11db);
 
-  display.init();
-  display.flipScreenVertically();
-  display.setFont(ArialMT_Plain_16);
-  showDisplayMessage("Booting...");
+  // display.init();  // Commented out to save power
+  // display.flipScreenVertically();  // Commented out to save power
+  // display.setFont(ArialMT_Plain_16);  // Commented out to save power
+  // showDisplayMessage("Booting...");  // Commented out to save power
 
   // // DEBUG, show ultrasonic distance
   // Serial.println("Testing ultrasonic sensor...");
@@ -389,7 +386,7 @@ void loop()
   }
   else
   {
-    showDisplayMessage("Dry - sleep...");
+    // showDisplayMessage("Dry - sleep...");  // Commented out to save power
     delay(2000);
     digitalWrite(LED_BUILTIN, LOW);
     wakeCount++;
